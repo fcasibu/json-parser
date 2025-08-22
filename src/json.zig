@@ -1,6 +1,4 @@
-const c = @cImport({
-    @cInclude("stb_c_lexer.h");
-});
+const c = @cImport(@cInclude("stb_c_lexer.h"));
 const std = @import("std");
 
 pub const JSONValue = union(enum) {
@@ -17,11 +15,22 @@ pub const JSONArray = struct { items: []JSONValue };
 pub const JSONNumber = struct { raw: []const u8, value: f64 };
 
 // TODO(fcasibu): Diagnostics
-const ParseError = error{ OutOfMemory, UnexpectedToken, InvalidIdentifier };
+const ParseError = error{ OutOfMemory, UnexpectedToken, InvalidIdentifier, TypeMismatch, MissingField, UnsupportedType, FixedArrayLengthMismatch };
 
 const Context = struct { source: []const u8, lexer: *c.stb_lexer, allocator: std.mem.Allocator };
 
-pub fn parse(allocator: std.mem.Allocator, file_content: []const u8) ParseError!JSONValue {
+fn JSON(comptime T: type) type {
+    return struct {
+        value: T,
+        json_value: JSONValue,
+
+        fn init(parsed_value: T, json_value: JSONValue) @This() {
+            return .{ .value = parsed_value, .json_value = json_value };
+        }
+    };
+}
+
+pub fn parse(comptime T: type, allocator: std.mem.Allocator, file_content: []const u8) ParseError!JSON(T) {
     var json_value: JSONValue = undefined;
 
     var lexer: c.stb_lexer = undefined;
@@ -68,7 +77,149 @@ pub fn parse(allocator: std.mem.Allocator, file_content: []const u8) ParseError!
     }
 
     try consumeAndExpectToken(context, c.CLEX_eof);
-    return json_value;
+    const parsed_value = try jsonValueToType(T, json_value, allocator);
+
+    return JSON(T).init(parsed_value, json_value);
+}
+
+pub fn jsonValueToType(comptime T: type, json_value: JSONValue, allocator: std.mem.Allocator) !T {
+    const type_info = @typeInfo(T);
+
+    switch (type_info) {
+        .pointer => |p| {
+            if (p.size != .slice) return ParseError.UnsupportedType;
+
+            if (p.child == u8) {
+                switch (json_value) {
+                    .string => return try allocator.dupe(u8, json_value.string),
+                    .array => return try jsonValueToArray(T, json_value, allocator),
+                    else => return ParseError.TypeMismatch,
+                }
+            }
+
+            return try jsonValueToArray(T, json_value, allocator);
+        },
+        .int => |i| {
+            switch (json_value) {
+                .number => |v| return @as(@Type(.{ .int = i }), @intFromFloat(v.value)),
+                else => return ParseError.TypeMismatch,
+            }
+        },
+        .float => |f| {
+            switch (json_value) {
+                .number => |v| return @as(@Type(.{ .float = f }), @floatCast(v.value)),
+                else => return ParseError.TypeMismatch,
+            }
+        },
+        .bool => {
+            switch (json_value) {
+                .boolean => |b| return b,
+                else => return ParseError.TypeMismatch,
+            }
+        },
+        .optional => |o| {
+            switch (json_value) {
+                .null => return null,
+                else => return try jsonValueToType(o.child, json_value, allocator),
+            }
+        },
+        .void => {},
+        .array => |arr_info| {
+            switch (json_value) {
+                .array => |a| {
+                    if (a.items.len != arr_info.len) {
+                        return ParseError.FixedArrayLengthMismatch;
+                    }
+
+                    return try jsonValueToFixedArray(T, json_value, allocator);
+                },
+                else => return ParseError.TypeMismatch,
+            }
+        },
+        .@"enum" => {
+            switch (json_value) {
+                .string => |s| return std.meta.stringToEnum(T, s),
+                else => return ParseError.TypeMismatch,
+            }
+        },
+        .@"struct" => return jsonValueToStruct(T, json_value, allocator),
+        else => return ParseError.UnsupportedType,
+    }
+}
+
+pub fn jsonValueToStruct(comptime T: type, json_value: JSONValue, allocator: std.mem.Allocator) !T {
+    const type_info = @typeInfo(T);
+    std.debug.assert(json_value == .object);
+    std.debug.assert(type_info == .@"struct");
+    const s = type_info.@"struct";
+
+    const obj: *JSONObject = switch (json_value) {
+        .object => |o| o,
+        else => return ParseError.TypeMismatch,
+    };
+
+    var result: T = undefined;
+
+    inline for (s.fields) |field| {
+        const field_name: []const u8 = field.name;
+
+        var field_value: ?JSONValue = null;
+
+        for (obj.items) |value| {
+            if (std.mem.eql(u8, value.key, field_name)) {
+                field_value = value.value;
+            }
+        }
+
+        if (field_value) |v| {
+            @field(result, field_name) = try jsonValueToType(field.type, v, allocator);
+        } else {
+            return ParseError.MissingField;
+        }
+    }
+
+    return result;
+}
+
+pub fn jsonValueToArray(comptime T: type, json_value: JSONValue, allocator: std.mem.Allocator) !T {
+    const type_info = @typeInfo(T);
+    std.debug.assert(json_value == .array);
+    std.debug.assert(type_info == .pointer and type_info.pointer.size == .slice);
+    const p = type_info.pointer;
+
+    const arr: *JSONArray = switch (json_value) {
+        .array => |a| a,
+        else => return ParseError.TypeMismatch,
+    };
+
+    var list = std.ArrayList(p.child).init(allocator);
+    errdefer list.deinit();
+
+    for (arr.items) |item| {
+        const v = try jsonValueToType(p.child, item, allocator);
+        try list.append(v);
+    }
+
+    return try list.toOwnedSlice();
+}
+
+pub fn jsonValueToFixedArray(comptime T: type, json_value: JSONValue, allocator: std.mem.Allocator) !T {
+    const type_info = @typeInfo(T);
+    std.debug.assert(json_value == .array);
+    std.debug.assert(type_info == .array and type_info.array.len == json_value.array.items.len);
+
+    const arr: *JSONArray = switch (json_value) {
+        .array => |a| a,
+        else => return ParseError.TypeMismatch,
+    };
+
+    var result: T = undefined;
+
+    for (arr.items, 0..) |item, idx| {
+        result[idx] = try jsonValueToType(type_info.array.child, item, allocator);
+    }
+
+    return result;
 }
 
 pub fn print(json_value: JSONValue) void {
@@ -104,6 +255,10 @@ pub fn free(allocator: std.mem.Allocator, value: *JSONValue) void {
             allocator.destroy(arr);
         },
     }
+}
+
+inline fn todo(message: []const u8, src: std.builtin.SourceLocation) void {
+    std.debug.panic("{s}:{d}:{d}: TODO: {s}\n", .{ src.file, src.line, src.column, message });
 }
 
 inline fn next(lex: *c.stb_lexer) void {
