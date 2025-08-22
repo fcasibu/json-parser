@@ -54,13 +54,13 @@ pub fn main() !void {
         \\}
     ;
 
-    var parsed = try json.parse(Person, allocator, json_string);
-    defer {
-        allocator.free(parsed.value.name);
-        json.free(allocator, &parsed.json_value);
-    }
+    var json_value = try json.parse(allocator, json_string);
+    defer json.free(allocator, &json_value);
 
-    std.debug.print("User: name={s}, age={d}, is_student={}", .{ parsed.value.name, parsed.value.age, parsed.value.is_student });
+    const person = try json.into(Person, json_value, allocator);
+    defer allocator.free(person.name);
+
+    std.debug.print("User: name={s}, age={d}, is_student={}", .{ person.name, person.age, person.is_student });
 }
 ```
 

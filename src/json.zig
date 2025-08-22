@@ -19,18 +19,11 @@ const ParseError = error{ OutOfMemory, UnexpectedToken, InvalidIdentifier, TypeM
 
 const Context = struct { source: []const u8, lexer: *c.stb_lexer, allocator: std.mem.Allocator };
 
-fn JSON(comptime T: type) type {
-    return struct {
-        value: T,
-        json_value: JSONValue,
-
-        fn init(parsed_value: T, json_value: JSONValue) @This() {
-            return .{ .value = parsed_value, .json_value = json_value };
-        }
-    };
+pub fn into(comptime T: type, json_value: JSONValue, allocator: std.mem.Allocator) ParseError!T {
+    return try jsonValueToType(T, json_value, allocator);
 }
 
-pub fn parse(comptime T: type, allocator: std.mem.Allocator, file_content: []const u8) ParseError!JSON(T) {
+pub fn parse(allocator: std.mem.Allocator, file_content: []const u8) ParseError!JSONValue {
     var json_value: JSONValue = undefined;
 
     var lexer: c.stb_lexer = undefined;
@@ -77,9 +70,7 @@ pub fn parse(comptime T: type, allocator: std.mem.Allocator, file_content: []con
     }
 
     try consumeAndExpectToken(context, c.CLEX_eof);
-    const parsed_value = try jsonValueToType(T, json_value, allocator);
-
-    return JSON(T).init(parsed_value, json_value);
+    return json_value;
 }
 
 pub fn jsonValueToType(comptime T: type, json_value: JSONValue, allocator: std.mem.Allocator) !T {

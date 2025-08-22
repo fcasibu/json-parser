@@ -12,15 +12,15 @@ test "simple object" {
         is_student: bool,
     };
 
-    var parsed = try json.parse(Person, allocator, input);
-    defer {
-        allocator.free(parsed.value.name);
-        json.free(allocator, &parsed.json_value);
-    }
+    var json_value = try json.parse(allocator, input);
+    defer json.free(allocator, &json_value);
 
-    try std.testing.expectEqual(17, parsed.value.age);
-    try std.testing.expectEqualStrings("Alice", parsed.value.name);
-    try std.testing.expectEqual(true, parsed.value.is_student);
+    const person = try json.into(Person, json_value, allocator);
+    defer allocator.free(person.name);
+
+    try std.testing.expectEqual(17, person.age);
+    try std.testing.expectEqualStrings("Alice", person.name);
+    try std.testing.expectEqual(true, person.is_student);
 }
 
 test "primitives" {
@@ -36,20 +36,22 @@ test "primitives" {
 
     const input = "{\"a\": \"hello\", \"b\": 123, \"c\": 1.23, \"d\": false, \"e\": null }";
 
-    var parsed = try json.parse(Primitives, allocator, input);
+    var json_value = try json.parse(allocator, input);
+    defer json.free(allocator, &json_value);
+
+    const primitives = try json.into(Primitives, json_value, allocator);
     defer {
-        allocator.free(parsed.value.a);
-        if (parsed.value.e) |v| {
+        allocator.free(primitives.a);
+        if (primitives.e) |v| {
             allocator.free(v);
         }
-        json.free(allocator, &parsed.json_value);
     }
 
-    try std.testing.expectEqualStrings("hello", parsed.value.a);
-    try std.testing.expectEqual(123, parsed.value.b);
-    try std.testing.expectEqual(1.23, parsed.value.c);
-    try std.testing.expectEqual(false, parsed.value.d);
-    try std.testing.expectEqual(null, parsed.value.e);
+    try std.testing.expectEqualStrings("hello", primitives.a);
+    try std.testing.expectEqual(123, primitives.b);
+    try std.testing.expectEqual(1.23, primitives.c);
+    try std.testing.expectEqual(false, primitives.d);
+    try std.testing.expectEqual(null, primitives.e);
 }
 
 test "nested object" {
@@ -63,10 +65,12 @@ test "nested object" {
 
     const input = "{\"a\": { \"b\": 123 } }";
 
-    var parsed = try json.parse(Nested, allocator, input);
-    defer json.free(allocator, &parsed.json_value);
+    var json_value = try json.parse(allocator, input);
+    defer json.free(allocator, &json_value);
 
-    try std.testing.expectEqual(123, parsed.value.a.b);
+    const nested = try json.into(Nested, json_value, allocator);
+
+    try std.testing.expectEqual(123, nested.a.b);
 }
 
 test "array of objects" {
@@ -80,13 +84,13 @@ test "array of objects" {
 
     const input = "{\"items\": [{\"a\": 1}, {\"a\": 2}] }";
 
-    var parsed = try json.parse(List, allocator, input);
-    defer {
-        allocator.free(parsed.value.items);
-        json.free(allocator, &parsed.json_value);
-    }
+    var json_value = try json.parse(allocator, input);
+    defer json.free(allocator, &json_value);
 
-    try std.testing.expectEqual(2, parsed.value.items.len);
-    try std.testing.expectEqual(1, parsed.value.items[0].a);
-    try std.testing.expectEqual(2, parsed.value.items[1].a);
+    const list = try json.into(List, json_value, allocator);
+    defer allocator.free(list.items);
+
+    try std.testing.expectEqual(2, list.items.len);
+    try std.testing.expectEqual(1, list.items[0].a);
+    try std.testing.expectEqual(2, list.items[1].a);
 }
