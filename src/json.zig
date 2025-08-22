@@ -12,6 +12,7 @@ pub const JSONValue = union(enum) {
 pub const JSONField = struct { key: []const u8, value: JSONValue };
 pub const JSONObject = struct { items: []JSONField };
 pub const JSONArray = struct { items: []JSONValue };
+// TODO(fcasibu): probably best to just separate float, int
 pub const JSONNumber = struct { raw: []const u8, value: f64 };
 
 // TODO(fcasibu): Diagnostics
@@ -229,7 +230,10 @@ pub fn free(allocator: std.mem.Allocator, value: *JSONValue) void {
         .string => |string| {
             allocator.free(string);
         },
-        .number, .boolean, .null => {},
+        .number => |num| {
+            allocator.free(num.raw);
+        },
+        .boolean, .null => {},
         .object => |obj| {
             for (obj.items) |*field| {
                 allocator.free(field.key);
@@ -274,13 +278,13 @@ fn parseString(context: Context) !JSONValue {
     return JSONValue{ .string = value };
 }
 
-fn sliceNumber(context: Context, first_char: ?[*c]u8) []const u8 {
+fn sliceNumber(context: Context, first_char: ?[*c]u8) ![]const u8 {
     const base: usize = @intFromPtr(context.source.ptr);
     const start: usize = @intFromPtr(first_char orelse context.lexer.where_firstchar) - base;
 
     const end: usize = (@intFromPtr(context.lexer.where_lastchar) - base) + 1;
 
-    return context.source[start..end];
+    return try context.allocator.dupe(u8, context.source[start..end]);
 }
 
 fn parseNumberWithSign(context: Context) ParseError!JSONValue {
@@ -289,8 +293,8 @@ fn parseNumberWithSign(context: Context) ParseError!JSONValue {
     next(context.lexer);
 
     switch (context.lexer.token) {
-        c.CLEX_intlit => return .{ .number = JSONNumber{ .raw = sliceNumber(context, minus_start), .value = -@as(f64, @floatFromInt(context.lexer.int_number)) } },
-        c.CLEX_floatlit => return .{ .number = JSONNumber{ .raw = sliceNumber(context, minus_start), .value = -context.lexer.real_number } },
+        c.CLEX_intlit => return .{ .number = JSONNumber{ .raw = try sliceNumber(context, minus_start), .value = -@as(f64, @floatFromInt(context.lexer.int_number)) } },
+        c.CLEX_floatlit => return .{ .number = JSONNumber{ .raw = try sliceNumber(context, minus_start), .value = -context.lexer.real_number } },
         else => return error.UnexpectedToken,
     }
 }
@@ -298,13 +302,13 @@ fn parseNumberWithSign(context: Context) ParseError!JSONValue {
 fn parseInt(context: Context) !JSONValue {
     try expectToken(context.lexer, c.CLEX_intlit);
 
-    return JSONValue{ .number = JSONNumber{ .raw = sliceNumber(context, null), .value = @as(f64, @floatFromInt(context.lexer.int_number)) } };
+    return JSONValue{ .number = JSONNumber{ .raw = try sliceNumber(context, null), .value = @as(f64, @floatFromInt(context.lexer.int_number)) } };
 }
 
 fn parseFloat(context: Context) !JSONValue {
     try expectToken(context.lexer, c.CLEX_floatlit);
 
-    return JSONValue{ .number = JSONNumber{ .raw = sliceNumber(context, null), .value = context.lexer.real_number } };
+    return JSONValue{ .number = JSONNumber{ .raw = try sliceNumber(context, null), .value = context.lexer.real_number } };
 }
 
 fn parseIdentifier(context: Context) !JSONValue {
