@@ -59,9 +59,9 @@ pub fn parse(allocator: std.mem.Allocator, file_content: []const u8) ParseError!
 
             const tok = @as(u8, @intCast(lexer.token));
             if (tok == '{') {
-                json_value = JSONValue{ .object = try parseObject(context) };
+                json_value = try parseObject(context);
             } else if (tok == '[') {
-                json_value = JSONValue{ .array = try parseArray(context) };
+                json_value = try parseArray(context);
             } else if (tok == '-') {
                 json_value = try parseNumberWithSign(context);
             } else {
@@ -74,7 +74,45 @@ pub fn parse(allocator: std.mem.Allocator, file_content: []const u8) ParseError!
     return json_value;
 }
 
-pub fn jsonValueToType(comptime T: type, json_value: JSONValue, allocator: std.mem.Allocator) !T {
+pub fn print(json_value: JSONValue) void {
+    switch (json_value) {
+        .string => |string| printString(string),
+        .number => |number| printNumber(number),
+        .boolean => |boolean| printBool(boolean),
+        .null => printNull(),
+        .object => |object| printObject(object, 0),
+        .array => |array| printArray(array, 0),
+    }
+}
+
+pub fn free(allocator: std.mem.Allocator, value: *JSONValue) void {
+    switch (value.*) {
+        .string => |string| {
+            allocator.free(string);
+        },
+        .number => |num| {
+            allocator.free(num.raw);
+        },
+        .boolean, .null => {},
+        .object => |obj| {
+            for (obj.items) |*field| {
+                allocator.free(field.key);
+                free(allocator, &field.value);
+            }
+            allocator.free(obj.items);
+            allocator.destroy(obj);
+        },
+        .array => |arr| {
+            for (arr.items) |*item| {
+                free(allocator, item);
+            }
+            allocator.free(arr.items);
+            allocator.destroy(arr);
+        },
+    }
+}
+
+fn jsonValueToType(comptime T: type, json_value: JSONValue, allocator: std.mem.Allocator) !T {
     const type_info = @typeInfo(T);
 
     switch (type_info) {
@@ -139,7 +177,7 @@ pub fn jsonValueToType(comptime T: type, json_value: JSONValue, allocator: std.m
     }
 }
 
-pub fn jsonValueToStruct(comptime T: type, json_value: JSONValue, allocator: std.mem.Allocator) !T {
+fn jsonValueToStruct(comptime T: type, json_value: JSONValue, allocator: std.mem.Allocator) !T {
     const type_info = @typeInfo(T);
     std.debug.assert(json_value == .object);
     std.debug.assert(type_info == .@"struct");
@@ -173,7 +211,7 @@ pub fn jsonValueToStruct(comptime T: type, json_value: JSONValue, allocator: std
     return result;
 }
 
-pub fn jsonValueToArray(comptime T: type, json_value: JSONValue, allocator: std.mem.Allocator) !T {
+fn jsonValueToArray(comptime T: type, json_value: JSONValue, allocator: std.mem.Allocator) !T {
     const type_info = @typeInfo(T);
     std.debug.assert(json_value == .array);
     std.debug.assert(type_info == .pointer and type_info.pointer.size == .slice);
@@ -195,7 +233,7 @@ pub fn jsonValueToArray(comptime T: type, json_value: JSONValue, allocator: std.
     return try list.toOwnedSlice();
 }
 
-pub fn jsonValueToFixedArray(comptime T: type, json_value: JSONValue, allocator: std.mem.Allocator) !T {
+fn jsonValueToFixedArray(comptime T: type, json_value: JSONValue, allocator: std.mem.Allocator) !T {
     const type_info = @typeInfo(T);
     std.debug.assert(json_value == .array);
     std.debug.assert(type_info == .array and type_info.array.len == json_value.array.items.len);
@@ -214,52 +252,6 @@ pub fn jsonValueToFixedArray(comptime T: type, json_value: JSONValue, allocator:
     return result;
 }
 
-pub fn print(json_value: JSONValue) void {
-    switch (json_value) {
-        .string => |string| printString(string),
-        .number => |number| printNumber(number),
-        .boolean => |boolean| printBool(boolean),
-        .null => printNull(),
-        .object => |object| printObject(object, 0),
-        .array => |array| printArray(array, 0),
-    }
-}
-
-pub fn free(allocator: std.mem.Allocator, value: *JSONValue) void {
-    switch (value.*) {
-        .string => |string| {
-            allocator.free(string);
-        },
-        .number => |num| {
-            allocator.free(num.raw);
-        },
-        .boolean, .null => {},
-        .object => |obj| {
-            for (obj.items) |*field| {
-                allocator.free(field.key);
-                free(allocator, &field.value);
-            }
-            allocator.free(obj.items);
-            allocator.destroy(obj);
-        },
-        .array => |arr| {
-            for (arr.items) |*item| {
-                free(allocator, item);
-            }
-            allocator.free(arr.items);
-            allocator.destroy(arr);
-        },
-    }
-}
-
-inline fn todo(message: []const u8, src: std.builtin.SourceLocation) void {
-    std.debug.panic("{s}:{d}:{d}: TODO: {s}\n", .{ src.file, src.line, src.column, message });
-}
-
-inline fn next(lex: *c.stb_lexer) void {
-    _ = c.stb_c_lexer_get_token(lex);
-}
-
 fn expectToken(lexer: *c.stb_lexer, token: c_int) !void {
     if (token != lexer.token) {
         return ParseError.UnexpectedToken;
@@ -275,7 +267,7 @@ fn parseString(context: Context) !JSONValue {
     // TODO(fcasibu): control characters, etc
     try expectToken(context.lexer, c.CLEX_dqstring);
     const value: []const u8 = try context.allocator.dupe(u8, std.mem.span(context.lexer.string));
-    return JSONValue{ .string = value };
+    return .{ .string = value };
 }
 
 fn sliceNumber(context: Context, first_char: ?[*c]u8) ![]const u8 {
@@ -293,8 +285,8 @@ fn parseNumberWithSign(context: Context) ParseError!JSONValue {
     next(context.lexer);
 
     switch (context.lexer.token) {
-        c.CLEX_intlit => return .{ .number = JSONNumber{ .raw = try sliceNumber(context, minus_start), .value = -@as(f64, @floatFromInt(context.lexer.int_number)) } },
-        c.CLEX_floatlit => return .{ .number = JSONNumber{ .raw = try sliceNumber(context, minus_start), .value = -context.lexer.real_number } },
+        c.CLEX_intlit => return .{ .number = .{ .raw = try sliceNumber(context, minus_start), .value = -@as(f64, @floatFromInt(context.lexer.int_number)) } },
+        c.CLEX_floatlit => return .{ .number = .{ .raw = try sliceNumber(context, minus_start), .value = -context.lexer.real_number } },
         else => return error.UnexpectedToken,
     }
 }
@@ -302,13 +294,13 @@ fn parseNumberWithSign(context: Context) ParseError!JSONValue {
 fn parseInt(context: Context) !JSONValue {
     try expectToken(context.lexer, c.CLEX_intlit);
 
-    return JSONValue{ .number = JSONNumber{ .raw = try sliceNumber(context, null), .value = @as(f64, @floatFromInt(context.lexer.int_number)) } };
+    return .{ .number = .{ .raw = try sliceNumber(context, null), .value = @as(f64, @floatFromInt(context.lexer.int_number)) } };
 }
 
 fn parseFloat(context: Context) !JSONValue {
     try expectToken(context.lexer, c.CLEX_floatlit);
 
-    return JSONValue{ .number = JSONNumber{ .raw = try sliceNumber(context, null), .value = context.lexer.real_number } };
+    return .{ .number = .{ .raw = try sliceNumber(context, null), .value = context.lexer.real_number } };
 }
 
 fn parseIdentifier(context: Context) !JSONValue {
@@ -322,7 +314,7 @@ fn parseIdentifier(context: Context) !JSONValue {
     return ParseError.InvalidIdentifier;
 }
 
-fn parseObject(ctx: Context) ParseError!*JSONObject {
+fn parseObject(ctx: Context) ParseError!JSONValue {
     try expectToken(ctx.lexer, '{');
 
     var fields = std.ArrayList(JSONField).init(ctx.allocator);
@@ -340,7 +332,7 @@ fn parseObject(ctx: Context) ParseError!*JSONObject {
         const obj = try ctx.allocator.create(JSONObject);
         errdefer ctx.allocator.destroy(obj);
         obj.items = try ctx.allocator.alloc(JSONField, 0);
-        return obj;
+        return .{ .object = obj };
     }
 
     while (true) {
@@ -383,10 +375,10 @@ fn parseObject(ctx: Context) ParseError!*JSONObject {
     errdefer ctx.allocator.destroy(obj);
 
     obj.items = try fields.toOwnedSlice();
-    return obj;
+    return .{ .object = obj };
 }
 
-fn parseArray(ctx: Context) ParseError!*JSONArray {
+fn parseArray(ctx: Context) ParseError!JSONValue {
     try expectToken(ctx.lexer, '[');
 
     var values = std.ArrayList(JSONValue).init(ctx.allocator);
@@ -400,7 +392,7 @@ fn parseArray(ctx: Context) ParseError!*JSONArray {
         const arr = try ctx.allocator.create(JSONArray);
         errdefer ctx.allocator.destroy(arr);
         arr.items = try ctx.allocator.alloc(JSONValue, 0);
-        return arr;
+        return .{ .array = arr };
     }
 
     while (true) {
@@ -424,7 +416,7 @@ fn parseArray(ctx: Context) ParseError!*JSONArray {
     errdefer ctx.allocator.destroy(arr);
 
     arr.items = try values.toOwnedSlice();
-    return arr;
+    return .{ .array = arr };
 }
 
 fn parseValueFromToken(context: Context) !JSONValue {
@@ -436,8 +428,8 @@ fn parseValueFromToken(context: Context) !JSONValue {
         else => {
             if (context.lexer.token >= 0 and context.lexer.token < 256) {
                 const tok: u8 = @intCast(context.lexer.token);
-                if (tok == '{') return .{ .object = try parseObject(context) };
-                if (tok == '[') return .{ .array = try parseArray(context) };
+                if (tok == '{') return try parseObject(context);
+                if (tok == '[') return try parseArray(context);
                 if (tok == '-') return try parseNumberWithSign(context);
             }
         },
@@ -536,4 +528,12 @@ fn printArray(json_array: *JSONArray, level: usize) void {
             },
         }
     }
+}
+
+inline fn todo(message: []const u8, src: std.builtin.SourceLocation) void {
+    std.debug.panic("{s}:{d}:{d}: TODO: {s}\n", .{ src.file, src.line, src.column, message });
+}
+
+inline fn next(lex: *c.stb_lexer) void {
+    _ = c.stb_c_lexer_get_token(lex);
 }
