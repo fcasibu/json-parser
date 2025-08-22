@@ -10,7 +10,7 @@ To use this in your project, add it as a dependency in your `build.zig.zon` file
 .{
     .dependencies = .{
         .json = .{
-            .url = "https://github.com/fcasibu/json-parser/archive/v0.1.0.tar.gz",
+            .url = "https://github.com/fcasibu/json-parser/archive/<version>.tar.gz",
             // run `zig build` to get the hash
             .hash = "",
         },
