@@ -94,3 +94,33 @@ test "array of objects" {
     try std.testing.expectEqual(1, list.items[0].a);
     try std.testing.expectEqual(2, list.items[1].a);
 }
+
+test "numeric extremes" {
+    const allocator = std.testing.allocator;
+
+    const Numbers = struct {
+        max_safe_int: i64,
+        min_safe_int: i64,
+        min_float: f64,
+        max_float: f64,
+    };
+
+    const input =
+        \\ { 
+        \\  "max_safe_int": 9007199254740991,
+        \\  "min_safe_int": -9007199254740991,
+        \\  "min_float": -1.7976931348623157e+308,
+        \\  "max_float": 1.7976931348623157e+308
+        \\ }
+    ;
+
+    var json_value = try json.parse(allocator, input);
+    defer json.free(allocator, &json_value);
+
+    const numbers = try json.into(Numbers, json_value, allocator);
+
+    try std.testing.expectEqual(9007199254740991, numbers.max_safe_int);
+    try std.testing.expectEqual(-9007199254740991, numbers.min_safe_int);
+    try std.testing.expectEqual(-1.7976931348623157e+308, numbers.min_float);
+    try std.testing.expectEqual(1.7976931348623157e+308, numbers.max_float);
+}
