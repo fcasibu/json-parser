@@ -4,18 +4,10 @@ A simple JSON parser for Zig.
 
 ## Installation
 
-To use this in your project, add it as a dependency in your `build.zig.zon` file. You can get the correct hash by running `zig build` once with the dependency added.
+Download and add this lib as a dependency by running the following command in your project root:
 
-```ini
-.{
-    .dependencies = .{
-        .json = .{
-            .url = "https://github.com/fcasibu/json-parser/archive/<version>.tar.gz",
-            // run `zig build` to get the hash
-            .hash = "",
-        },
-    },
-}
+```sh
+zig fetch --save git+https://github.com/fcasibu/json-parser
 ```
 
 Then, in your `build.zig` file, add the `json` module to your executable:
