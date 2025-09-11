@@ -222,7 +222,7 @@ fn jsonValueToArray(comptime T: type, json_value: JSONValue, allocator: std.mem.
         else => return ParseError.TypeMismatch,
     };
 
-    var list = std.ArrayList(p.child).init(allocator);
+    var list = std.array_list.Managed(p.child).init(allocator);
     errdefer list.deinit();
 
     for (arr.items) |item| {
@@ -317,7 +317,7 @@ fn parseIdentifier(context: Context) !JSONValue {
 fn parseObject(ctx: Context) ParseError!JSONValue {
     try expectToken(ctx.lexer, '{');
 
-    var fields = std.ArrayList(JSONField).init(ctx.allocator);
+    var fields = std.array_list.Managed(JSONField).init(ctx.allocator);
 
     errdefer {
         for (fields.items) |*f| {
@@ -381,7 +381,7 @@ fn parseObject(ctx: Context) ParseError!JSONValue {
 fn parseArray(ctx: Context) ParseError!JSONValue {
     try expectToken(ctx.lexer, '[');
 
-    var values = std.ArrayList(JSONValue).init(ctx.allocator);
+    var values = std.array_list.Managed(JSONValue).init(ctx.allocator);
     errdefer {
         for (values.items) |*v| free(ctx.allocator, v);
         values.deinit();
