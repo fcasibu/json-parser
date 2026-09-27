@@ -1,6 +1,6 @@
 # json-parser
 
-A simple JSON parser for Zig.
+A simple JSON parser for Zig. Requires Zig 0.16.0 or newer.
 
 ## Installation
 
@@ -18,7 +18,6 @@ const json_dep = b.dependency("json", .{
     .optimize = optimize,
 });
 exe.root_module.addImport("json", json_dep.module("json"));
-exe.linkLibrary(json_dep.artifact("json"));
 ```
 
 ## Usage
@@ -72,10 +71,25 @@ To run tests:
 zig build test --summary all
 ```
 
+## Errors and diagnostics
+
+`parse` returns a `ParseError` (`InvalidNumber`, `MissingColon`,
+`DuplicateField`, `DepthExceeded`, ...). Use `parseDetailed` or inspect
+`json.last_diagnostic` right after a failure to get the `line`, `column`,
+`offset`, and a human-readable `message`:
+
+```zig
+var diag: json.Diagnostic = .{};
+var value = json.parseDetailed(allocator, text, &diag) catch |err| {
+    std.debug.print("{s} at {d}:{d}: {s}\n", .{ @errorName(err), diag.line, diag.column, diag.message });
+    return err;
+};
+defer json.free(allocator, &value);
+```
+
+Values produced by `into` that own memory (slices, struct fields) must be
+released with `json.freeMapped(T, &value, allocator)`.
+
 ## Contributing
 
 Contributions are welcome! Please feel free to open an issue or submit a pull request. We are all learners of zig here!
-
-## Acknowledgments
-
-- This project uses the [stb_c_lexer.h](https://github.com/nothings/stb) library.
